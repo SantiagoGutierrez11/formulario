@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Muro de respuestas · en vivo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ====== CONFIGURACIÓN RÁPIDA ======
+     Si pegas aquí tu enlace CSV, el muro lo cargará solo al abrir.
+     Déjalo vacío para configurarlo desde el panel (⚙) en pantalla. */
+  :root{
+    /* paleta "sala de escucha": penumbra cálida + un verde salvia que calma */
+    --bg-1:#211e26;
+    --bg-2:#2a2531;
+    --ink:#f1ece4;          /* texto principal, blanco cálido */
+    --muted:#9a8fa0;        /* texto secundario, malva apagado */
+    --sage:#a7c4ad;         /* acento sereno, usado con mucha restricción */
+    --surface:rgba(255,255,255,.04);
+    --line:rgba(255,255,255,.10);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:"Inter",system-ui,sans-serif;
+    color:var(--ink);
+    background:
+      radial-gradient(120% 90% at 50% 12%, #2c2733 0%, var(--bg-1) 55%, #1b1820 100%);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* respiración ambiental: un halo muy tenue que late despacio detrás del texto */
+  .breath{
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:radial-gradient(45% 38% at 50% 46%, rgba(167,196,173,.10), transparent 70%);
+    animation:breathe 9s ease-in-out infinite;
+  }
+  @keyframes breathe{
+    0%,100%{opacity:.45; transform:scale(.96)}
+    50%{opacity:1; transform:scale(1.04)}
+  }
+
+  .stage{
+    position:relative; z-index:1;
+    height:100%; width:100%;
+    display:grid;
+    grid-template-rows:auto 1fr auto;
+    padding:clamp(20px,4vw,56px);
+  }
+
+  /* ---- cabecera ---- */
+  .top{display:flex; align-items:center; justify-content:space-between; gap:16px}
+  .eyebrow{
+    display:flex; align-items:center; gap:10px;
+    font-size:13px; font-weight:600; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--muted);
+  }
+  .live-dot{
+    width:8px; height:8px; border-radius:50%; background:var(--sage);
+    box-shadow:0 0 0 0 rgba(167,196,173,.6);
+    animation:pulse 2.4s ease-out infinite;
+  }
+  .live-dot.paused{background:var(--muted); animation:none}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(167,196,173,.5)}
+    70%{box-shadow:0 0 0 12px rgba(167,196,173,0)}
+    100%{box-shadow:0 0 0 0 rgba(167,196,173,0)}
+  }
+  .gear{
+    background:none; border:1px solid var(--line); color:var(--muted);
+    width:40px; height:40px; border-radius:10px; cursor:pointer; font-size:17px;
+    display:grid; place-items:center; transition:.2s;
+  }
+  .gear:hover,.gear:focus-visible{color:var(--ink); border-color:var(--sage); outline:none}
+
+  /* ---- respuesta (la protagonista) ---- */
+  .quote-wrap{
+    display:grid; place-items:center; text-align:center;
+    padding:0 clamp(8px,5vw,90px); min-height:0;
+  }
+  .quote{
+    font-family:"Fraunces","Georgia",serif;
+    font-weight:400; line-height:1.22; color:var(--ink);
+    max-width:18ch; /* recalculado en JS según largo */
+    text-wrap:balance;
+    opacity:0; transform:translateY(14px);
+    transition:opacity .7s ease, transform .7s ease;
+  }
+  .quote.show{opacity:1; transform:translateY(0)}
+  .quote .mark{color:var(--sage); font-style:italic; opacity:.85}
+
+  /* ---- pie: contador + ritmo ---- */
+  .bottom{display:flex; align-items:center; gap:20px}
+  .count{
+    font-variant-numeric:tabular-nums; font-size:14px; letter-spacing:.08em;
+    color:var(--muted); white-space:nowrap; min-width:84px;
+  }
+  .count b{color:var(--ink); font-weight:600}
+  .track{flex:1; height:2px; background:var(--line); border-radius:2px; overflow:hidden}
+  .fill{height:100%; width:0; background:var(--sage); border-radius:2px}
+  .note{font-size:12px; color:var(--muted); letter-spacing:.04em; white-space:nowrap}
+
+  /* ---- panel de configuración ---- */
+  .panel{
+    position:fixed; top:0; right:0; z-index:5;
+    width:min(420px,92vw); height:100%;
+    background:linear-gradient(180deg,#262130,#211c28);
+    border-left:1px solid var(--line);
+    box-shadow:-30px 0 80px rgba(0,0,0,.4);
+    transform:translateX(100%); transition:transform .35s cubic-bezier(.4,0,.2,1);
+    overflow-y:auto; padding:28px;
+  }
+  .panel.open{transform:translateX(0)}
+  .panel h2{font-family:"Fraunces",serif; font-weight:500; font-size:22px; margin-bottom:4px}
+  .panel .sub{color:var(--muted); font-size:13px; margin-bottom:24px; line-height:1.5}
+  .field{margin-bottom:18px}
+  .field label{display:block; font-size:12px; font-weight:600; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--muted); margin-bottom:7px}
+  .field input,.field select{
+    width:100%; padding:11px 13px; font-size:14px; font-family:inherit;
+    color:var(--ink); background:var(--surface);
+    border:1px solid var(--line); border-radius:9px; transition:.2s;
+  }
+  .field input:focus,.field select:focus{outline:none; border-color:var(--sage)}
+  .field select option{background:#262130}
+  .row2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  .seg{display:flex; border:1px solid var(--line); border-radius:9px; overflow:hidden}
+  .seg button{
+    flex:1; padding:10px; background:transparent; color:var(--muted);
+    border:none; cursor:pointer; font-family:inherit; font-size:13px; transition:.2s;
+  }
+  .seg button.active{background:var(--sage); color:#1c2620; font-weight:600}
+  .apply{
+    width:100%; margin-top:6px; padding:13px; border:none; border-radius:9px; cursor:pointer;
+    background:var(--sage); color:#1b261f; font-family:inherit; font-weight:600; font-size:15px;
+    transition:.2s;
+  }
+  .apply:hover{filter:brightness(1.06)}
+  .status{
+    margin-top:18px; padding:12px 14px; border-radius:9px; font-size:13px; line-height:1.5;
+    background:var(--surface); border:1px solid var(--line); color:var(--muted);
+  }
+  .status.ok{border-color:rgba(167,196,173,.4); color:var(--sage)}
+  .status.err{border-color:rgba(224,140,140,.4); color:#e3a0a0}
+  details{margin-top:22px; border-top:1px solid var(--line); padding-top:18px}
+  summary{cursor:pointer; font-size:13px; font-weight:600; color:var(--ink); letter-spacing:.03em}
+  details ol{margin:14px 0 0 18px; color:var(--muted); font-size:13px; line-height:1.7}
+  details code{color:var(--sage); font-size:12px}
+  .kbd{margin-top:20px; font-size:12px; color:var(--muted); line-height:1.8}
+  .kbd b{color:var(--ink); font-weight:600; font-family:"Inter"; background:var(--surface);
+    border:1px solid var(--line); border-radius:5px; padding:1px 7px; font-size:11px}
+
+  .scrim{position:fixed; inset:0; z-index:4; background:rgba(15,12,18,.5);
+    opacity:0; pointer-events:none; transition:.3s}
+  .scrim.open{opacity:1; pointer-events:auto}
+
+  @media (prefers-reduced-motion:reduce){
+    .breath,.live-dot{animation:none}
+    .quote{transition:opacity .3s ease}
+  }
+  @media (max-width:640px){
+    .note{display:none}
+    .eyebrow{font-size:11px; letter-spacing:.16em}
+  }
+</style>
+</head>
+<body>
+  <div class="breath" aria-hidden="true"></div>
+
+  <main class="stage">
+    <header class="top">
+      <div class="eyebrow"><span class="live-dot" id="dot"></span><span id="title">Voces anónimas</span></div>
+      <button class="gear" id="gear" aria-label="Configurar muro">⚙</button>
+    </header>
+
+    <section class="quote-wrap">
+      <blockquote class="quote" id="quote"></blockquote>
+    </section>
+
+    <footer class="bottom">
+      <div class="count"><b id="cur">00</b> / <span id="total">00</span></div>
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <div class="note" id="note">modo demo</div>
+    </footer>
+  </main>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="panel" id="panel" aria-label="Configuración">
+    <h2>Configurar el muro</h2>
+    <p class="sub">Conecta tu hoja compartida y elige el ritmo. El muro la lee en vivo y refresca las respuestas nuevas en segundos, priorizando las más recientes.</p>
+
+    <div class="field">
+      <label for="url">Enlace de la hoja</label>
+      <input id="url" type="url" placeholder="https://docs.google.com/spreadsheets/d/.../edit">
+    </div>
+
+    <div class="field">
+      <label for="col">Pregunta a mostrar</label>
+      <select id="col"><option>Carga una hoja primero…</option></select>
+    </div>
+
+    <div class="field">
+      <label for="ttl">Título en pantalla</label>
+      <input id="ttl" type="text" value="Voces anónimas">
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <label for="dur">Segundos por respuesta</label>
+        <input id="dur" type="number" min="3" max="60" value="9">
+      </div>
+      <div class="field">
+        <label for="ref">Actualizar cada (seg)</label>
+        <input id="ref" type="number" min="5" max="600" value="12">
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="lim">Mostrar solo las últimas (0 = todas)</label>
+      <input id="lim" type="number" min="0" max="600" value="40">
+    </div>
+
+    <div class="field">
+      <label>Orden</label>
+      <div class="seg" id="order">
+        <button data-order="recent" class="active">Recientes primero</button>
+        <button data-order="sequential">En orden</button>
+        <button data-order="random">Aleatorio</button>
+      </div>
+    </div>
+
+    <button class="apply" id="apply">Aplicar y empezar</button>
+    <div class="status" id="status">Mostrando respuestas de ejemplo. Pega tu enlace para ir en vivo.</div>
+
+    <details>
+      <summary>¿Cómo conecto mi hoja en vivo?</summary>
+      <ol>
+        <li>En tu hoja de respuestas: pulsa <code>Compartir</code> (arriba a la derecha).</li>
+        <li>En "Acceso general" elige <code>Cualquier persona con el enlace</code>, como <code>Lector</code>.</li>
+        <li>Copia ese enlace y pégalo arriba. El muro lee la hoja al instante, sin caché.</li>
+        <li>Si quieres una pestaña concreta, ábrela antes de copiar el enlace (lleva su <code>gid</code>).</li>
+      </ol>
+    </details>
+
+    <div class="kbd">
+      Atajos: <b>espacio</b> pausa · <b>←</b> <b>→</b> cambia · <b>S</b> abre este panel
+    </div>
+  </aside>
+
+<script>
+/* ====== Pega aquí tu enlace para que cargue solo al abrir (opcional) ====== */
+const CONFIG_URL = "";
+
+/* ---------- estado ---------- */
+const S = {
+  url: CONFIG_URL.trim(), fetchUrl: "",
+  rows: [], headers: [], colIndex: 0,
+  responses: [], order: "recent", limit: 40, queue: [], qpos: 0,
+  durMs: 9000, refreshMs: 12000,
+  paused: false, demo: true,
+  rafId: null, segStart: 0, refreshTimer: null
+};
+
+/* Convierte un enlace normal de Google Sheets en la URL de lectura en vivo (gviz).
+   Si ya es un CSV publicado o un gviz, lo deja igual. */
+function toLiveUrl(input){
+  const u = (input||"").trim();
+  if(!u) return "";
+  if(u.includes("/gviz/") || u.includes("output=csv")) return u;
+  const idMatch = u.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if(!idMatch) return u;
+  const id = idMatch[1];
+  const gidMatch = u.match(/[#&?]gid=([0-9]+)/);
+  const gid = gidMatch ? gidMatch[1] : "0";
+  return "https://docs.google.com/spreadsheets/d/"+id+"/gviz/tq?tqx=out:csv&gid="+gid;
+}
+
+const DEMO = [
+  "Al principio me costó aceptar que necesitaba ayuda, pero el acompañamiento cambió la forma en que llego al aula.",
+  "La medicación me devolvió el sueño. Recién ahí entendí cuánto lo había perdido.",
+  "Siento que dependo de las pastillas para sostener el ritmo del trabajo, y eso me preocupa.",
+  "El seguimiento profesional fue lo único que me sostuvo el año pasado.",
+  "A veces tengo miedo de dejar la medicación y que todo vuelva a desbordarse.",
+  "Me ayudó hablarlo con alguien sin sentir que me juzgaban.",
+  "No sé si es la medicación o el descanso, pero por primera vez en mucho tiempo me siento yo.",
+  "Lo más duro fue admitir que enseñar también desgasta el alma.",
+  "Ojalá hubiera pedido ayuda antes. Aguanté demasiado en silencio.",
+  "Los efectos al principio fueron difíciles, pero hoy puedo concentrarme de nuevo."
+];
+
+/* ---------- elementos ---------- */
+const el = id => document.getElementById(id);
+const quote=el("quote"), curEl=el("cur"), totalEl=el("total"),
+      fill=el("fill"), note=el("note"), dot=el("dot"), titleEl=el("title"),
+      panel=el("panel"), scrim=el("scrim");
+
+/* ---------- parser CSV (maneja comillas, comas y saltos internos) ---------- */
+function parseCSV(text){
+  const rows=[]; let row=[], field="", q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i++;} else q=false; }
+      else field+=c;
+    }else{
+      if(c==='"') q=true;
+      else if(c===','){ row.push(field); field=""; }
+      else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=""; }
+      else if(c==='\r'){ /* ignora */ }
+      else field+=c;
+    }
+  }
+  if(field.length||row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=>r.some(v=>v.trim()!==""));
+}
+
+/* ---------- cargar la hoja ---------- */
+async function loadSheet(showStatus){
+  if(!S.fetchUrl){ useDemo(); return; }
+  try{
+    const res=await fetch(S.fetchUrl,{cache:"no-store"});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const text=await res.text();
+    const all=parseCSV(text);
+    if(all.length<2) throw new Error("La hoja no tiene respuestas todavía.");
+    S.headers=all[0]; S.rows=all.slice(1); S.demo=false;
+    if(S.colIndex>=S.headers.length) S.colIndex=S.headers.length-1;
+    buildColSelect();
+    rebuildResponses();
+    if(showStatus) setStatus("En vivo · "+S.responses.length+" respuestas cargadas.","ok");
+    note.textContent="en vivo";
+  }catch(err){
+    if(showStatus) setStatus("No se pudo leer la hoja: "+err.message+
+      " Revisa que la hoja esté compartida como 'Cualquier persona con el enlace · Lector'.","err");
+    if(S.demo) useDemo();
+  }
+}
+
+function useDemo(){
+  S.demo=true; S.responses=DEMO.slice(); note.textContent="modo demo";
+  buildQueue(); totalEl.textContent=pad(S.responses.length);
+  if(S.qpos>=S.responses.length) S.qpos=0;
+}
+
+function rebuildResponses(){
+  let list=S.rows.map(r=>(r[S.colIndex]||"").trim()).filter(v=>v!=="");
+  // las filas vienen de la más antigua a la más nueva; nos quedamos con las últimas
+  if(S.limit>0 && list.length>S.limit) list=list.slice(-S.limit);
+  S.responses=list.length?list:DEMO.slice();
+  totalEl.textContent=pad(S.responses.length);
+  buildQueue();
+  if(S.qpos>=S.responses.length) S.qpos=0;
+}
+
+function buildColSelect(){
+  const sel=el("col"); sel.innerHTML="";
+  S.headers.forEach((h,i)=>{
+    const o=document.createElement("option");
+    o.value=i; o.textContent=h||("Columna "+(i+1));
+    if(i===S.colIndex) o.selected=true;
+    sel.appendChild(o);
+  });
+}
+
+/* ---------- cola de reproducción ---------- */
+function buildQueue(){
+  S.queue=S.responses.map((_,i)=>i);
+  if(S.order==="recent"){
+    S.queue.reverse(); // la última respuesta (más nueva) primero
+  }else if(S.order==="random"){
+    for(let i=S.queue.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [S.queue[i],S.queue[j]]=[S.queue[j],S.queue[i]];
+    }
+  }
+}
+
+/* ---------- mostrar una respuesta ---------- */
+function pad(n){return String(n).padStart(2,"0");}
+
+function fitQuote(txt){
+  // ancho de línea y tamaño según el largo del texto
+  const len=txt.length;
+  let max = len<60 ? 64 : len<120 ? 52 : len<200 ? 42 : 34;
+  quote.style.maxWidth = (len<90?18:len<180?26:32)+"ch";
+  quote.style.fontSize=max+"px";
+  const box=document.querySelector(".quote-wrap");
+  let size=max;
+  while(size>22 && (quote.scrollHeight>box.clientHeight*0.92)){
+    size-=2; quote.style.fontSize=size+"px";
+  }
+}
+
+function render(){
+  if(!S.responses.length) return;
+  const idx=S.queue[S.qpos % S.queue.length];
+  const txt=S.responses[idx];
+  quote.classList.remove("show");
+  setTimeout(()=>{
+    quote.innerHTML='<span class="mark">“</span>'+escapeHtml(txt)+'<span class="mark">”</span>';
+    fitQuote(txt);
+    quote.classList.add("show");
+  },180);
+  curEl.textContent=pad((S.qpos % S.responses.length)+1);
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+}
+
+/* ---------- bucle con ritmo y pausa ---------- */
+function tick(now){
+  if(S.paused){ S.rafId=requestAnimationFrame(tick); return; }
+  const elapsed=now-S.segStart;
+  const pct=Math.min(elapsed/S.durMs,1);
+  fill.style.width=(pct*100)+"%";
+  if(pct>=1){
+    S.qpos=(S.qpos+1)%Math.max(S.responses.length,1);
+    render();
+    S.segStart=now;
+  }
+  S.rafId=requestAnimationFrame(tick);
+}
+
+function start(){
+  cancelAnimationFrame(S.rafId);
+  render();
+  S.segStart=performance.now();
+  S.rafId=requestAnimationFrame(tick);
+}
+
+function next(d){
+  S.qpos=(S.qpos+d+S.responses.length)%S.responses.length;
+  render(); S.segStart=performance.now(); fill.style.width="0%";
+}
+
+function togglePause(){
+  S.paused=!S.paused;
+  dot.classList.toggle("paused",S.paused);
+  if(!S.paused) S.segStart=performance.now()-(parseFloat(fill.style.width||0)/100)*S.durMs;
+}
+
+/* ---------- panel ---------- */
+function openPanel(o){ panel.classList.toggle("open",o); scrim.classList.toggle("open",o); }
+el("gear").onclick=()=>openPanel(!panel.classList.contains("open"));
+scrim.onclick=()=>openPanel(false);
+el("col").onchange=e=>{ S.colIndex=+e.target.value; rebuildResponses(); };
+document.querySelectorAll("#order button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll("#order button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active"); S.order=b.dataset.order; buildQueue();
+  };
+});
+
+el("apply").onclick=async()=>{
+  S.url=el("url").value.trim();
+  S.fetchUrl=toLiveUrl(S.url);
+  S.durMs=Math.max(3,+el("dur").value||9)*1000;
+  S.refreshMs=Math.max(5,+el("ref").value||12)*1000;
+  S.limit=Math.max(0,+el("lim").value||0);
+  const t=el("ttl").value.trim()||"Voces anónimas"; titleEl.textContent=t;
+  setStatus("Cargando…","");
+  await loadSheet(true);
+  start();
+  scheduleRefresh();
+  if(!S.demo) openPanel(false);
+};
+
+function scheduleRefresh(){
+  clearInterval(S.refreshTimer);
+  if(S.fetchUrl){
+    S.refreshTimer=setInterval(()=>loadSheet(false), S.refreshMs);
+  }
+}
+
+function setStatus(msg,kind){
+  const s=el("status"); s.textContent=msg;
+  s.className="status"+(kind?" "+kind:"");
+}
+
+/* ---------- teclado ---------- */
+document.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT") return;
+  if(e.code==="Space"){ e.preventDefault(); togglePause(); }
+  else if(e.code==="ArrowRight") next(1);
+  else if(e.code==="ArrowLeft") next(-1);
+  else if(e.key.toLowerCase()==="s") openPanel(!panel.classList.contains("open"));
+});
+
+/* ---------- arranque ---------- */
+(async function init(){
+  el("url").value=S.url;
+  S.fetchUrl=toLiveUrl(S.url);
+  if(S.fetchUrl){ await loadSheet(true); scheduleRefresh(); }
+  else useDemo();
+  start();
+})();
+</script>
+</body>
+</html>
