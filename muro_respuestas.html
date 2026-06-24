@@ -53,7 +53,8 @@
   }
 
   /* ---- cabecera ---- */
-  .top{display:flex; align-items:center; justify-content:space-between; gap:16px}
+  .top{display:flex; flex-direction:column; gap:clamp(14px,3vh,32px)}
+  .toprow{display:flex; align-items:center; justify-content:space-between; gap:16px}
   .eyebrow{
     display:flex; align-items:center; gap:10px;
     font-size:13px; font-weight:600; letter-spacing:.22em; text-transform:uppercase;
@@ -76,6 +77,25 @@
     display:grid; place-items:center; transition:.2s;
   }
   .gear:hover,.gear:focus-visible{color:var(--ink); border-color:var(--sage); outline:none}
+
+  /* ---- conmutador de preguntas ---- */
+  .qbar{display:flex; align-items:center; justify-content:center; gap:18px}
+  .qbar.hidden{display:none}
+  .qnav{
+    background:none; border:1px solid var(--line); color:var(--muted);
+    width:44px; height:44px; border-radius:50%; cursor:pointer; font-size:22px; line-height:1;
+    display:grid; place-items:center; transition:.2s; flex:none;
+  }
+  .qnav:hover,.qnav:focus-visible{color:var(--ink); border-color:var(--sage); outline:none}
+  .qcenter{text-align:center; max-width:70vw}
+  .qlabel{
+    font-family:"Fraunces","Georgia",serif; font-size:clamp(22px,3.2vw,40px);
+    color:var(--ink); line-height:1.18; display:block; font-weight:500;
+  }
+  .qmeta{
+    font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted);
+    margin-top:6px; font-family:"Inter",sans-serif;
+  }
 
   /* ---- respuesta (la protagonista) ---- */
   .quote-wrap{
@@ -173,8 +193,18 @@
 
   <main class="stage">
     <header class="top">
-      <div class="eyebrow"><span class="live-dot" id="dot"></span><span id="title">Voces anónimas</span></div>
-      <button class="gear" id="gear" aria-label="Configurar muro">⚙</button>
+      <div class="toprow">
+        <div class="eyebrow"><span class="live-dot" id="dot"></span><span id="title">Voces anónimas</span></div>
+        <button class="gear" id="gear" aria-label="Configurar muro">⚙</button>
+      </div>
+      <div class="qbar hidden" id="qbar">
+        <button class="qnav" id="qPrev" aria-label="Pregunta anterior">‹</button>
+        <div class="qcenter">
+          <span class="qlabel" id="qlabel"></span>
+          <span class="qmeta" id="qmeta"></span>
+        </div>
+        <button class="qnav" id="qNext" aria-label="Pregunta siguiente">›</button>
+      </div>
     </header>
 
     <section class="quote-wrap">
@@ -194,8 +224,8 @@
     <p class="sub">Conecta tu hoja compartida y elige el ritmo. El muro la lee en vivo y refresca las respuestas nuevas en segundos, priorizando las más recientes.</p>
 
     <div class="field">
-      <label for="url">Enlace de la hoja</label>
-      <input id="url" type="url" placeholder="https://docs.google.com/spreadsheets/d/.../edit">
+      <label for="url">Enlace de la hoja o del puente en vivo</label>
+      <input id="url" type="url" placeholder="https://script.google.com/.../exec  (o el enlace de la hoja)">
     </div>
 
     <div class="field">
@@ -237,17 +267,15 @@
     <div class="status" id="status">Mostrando respuestas de ejemplo. Pega tu enlace para ir en vivo.</div>
 
     <details>
-      <summary>¿Cómo conecto mi hoja en vivo?</summary>
+      <summary>¿Cómo conecto mi hoja?</summary>
       <ol>
-        <li>En tu hoja de respuestas: pulsa <code>Compartir</code> (arriba a la derecha).</li>
-        <li>En "Acceso general" elige <code>Cualquier persona con el enlace</code>, como <code>Lector</code>.</li>
-        <li>Copia ese enlace y pégalo arriba. El muro lee la hoja al instante, sin caché.</li>
-        <li>Si quieres una pestaña concreta, ábrela antes de copiar el enlace (lleva su <code>gid</code>).</li>
+        <li><b>Instantáneo (recomendado para muchas personas):</b> instala el puente "Apps Script" en tu hoja (<code>Extensiones → Apps Script</code>), publícalo como aplicación web y pega aquí su URL <code>.../exec</code>. Lee en vivo, sin retraso.</li>
+        <li><b>Rápido de montar:</b> en la hoja, <code>Compartir → Cualquier persona con el enlace · Lector</code>, copia el enlace y pégalo aquí. Funciona, pero las respuestas nuevas pueden tardar unos minutos por la caché de Google.</li>
       </ol>
     </details>
 
     <div class="kbd">
-      Atajos: <b>espacio</b> pausa · <b>←</b> <b>→</b> cambia · <b>S</b> abre este panel
+      Atajos: <b>espacio</b> pausa · <b>←</b> <b>→</b> cambia respuesta · <b>↑</b> <b>↓</b> cambia pregunta · <b>S</b> abre este panel
     </div>
   </aside>
 
@@ -257,26 +285,57 @@ const CONFIG_URL = "";
 
 /* ---------- estado ---------- */
 const S = {
-  url: CONFIG_URL.trim(), fetchUrl: "",
-  rows: [], headers: [], colIndex: 0,
+  url: CONFIG_URL.trim(),
+  appUrl: "", sheetId: "", gid: "0", csvUrl: "",
+  rows: [], headers: [], colIndex: 0, colChosen: false, qCols: [], qPtr: 0,
   responses: [], order: "recent", limit: 40, queue: [], qpos: 0,
   durMs: 9000, refreshMs: 12000,
   paused: false, demo: true,
   rafId: null, segStart: 0, refreshTimer: null
 };
 
-/* Convierte un enlace normal de Google Sheets en la URL de lectura en vivo (gviz).
-   Si ya es un CSV publicado o un gviz, lo deja igual. */
-function toLiveUrl(input){
-  const u = (input||"").trim();
-  if(!u) return "";
-  if(u.includes("/gviz/") || u.includes("output=csv")) return u;
-  const idMatch = u.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  if(!idMatch) return u;
-  const id = idMatch[1];
-  const gidMatch = u.match(/[#&?]gid=([0-9]+)/);
-  const gid = gidMatch ? gidMatch[1] : "0";
-  return "https://docs.google.com/spreadsheets/d/"+id+"/gviz/tq?tqx=out:csv&gid="+gid;
+/* Decide cómo leer la hoja a partir del enlace pegado:
+   - URL del puente Apps Script (script.google.com/.../exec) -> lectura EN VIVO sin caché
+   - CSV publicado -> fetch
+   - enlace normal de la hoja -> lectura pública (puede tener algo de retraso por caché). */
+function configureSource(input){
+  const u=(input||"").trim();
+  S.appUrl=""; S.csvUrl=""; S.sheetId=""; S.gid="0";
+  if(!u) return;
+  if(u.includes("script.google.com") && u.includes("/exec")){ S.appUrl=u; return; }
+  if(u.includes("output=csv") || u.includes("/pub")){ S.csvUrl=u; return; }
+  const idMatch=u.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if(idMatch) S.sheetId=idMatch[1];
+  const gidMatch=u.match(/[#&?]gid=([0-9]+)/);
+  if(gidMatch) S.gid=gidMatch[1];
+}
+function hasSource(){ return !!(S.appUrl || S.csvUrl || S.sheetId); }
+
+/* Petición JSONP genérica: no la bloquea el navegador, ni siquiera desde un archivo local.
+   makeUrl(cb) debe devolver la URL que llama a la función "cb". */
+function jsonpRequest(makeUrl){
+  return new Promise((resolve,reject)=>{
+    const cb="cb_"+Math.random().toString(36).slice(2);
+    const script=document.createElement("script");
+    const timer=setTimeout(()=>{cleanup();reject(new Error("Tiempo de espera agotado"));},15000);
+    function cleanup(){ delete window[cb]; if(script.parentNode) script.parentNode.removeChild(script); clearTimeout(timer); }
+    window[cb]=function(resp){ cleanup(); resolve(resp); };
+    script.onerror=function(){ cleanup(); reject(new Error("No se pudo conectar")); };
+    script.src=makeUrl(cb);
+    document.head.appendChild(script);
+  });
+}
+
+/* Convierte la respuesta gviz (método público) en {headers, rows} */
+function parseGviz(resp){
+  const t=resp && resp.table;
+  if(!t) throw new Error("Respuesta vacía");
+  const headers=t.cols.map(c=>(c.label||c.id||"").trim());
+  const rows=t.rows.map(r=>(r.c||[]).map(cell=>{
+    if(!cell) return "";
+    return (cell.f!=null ? cell.f : (cell.v!=null ? cell.v : ""));
+  }));
+  return {headers, rows};
 }
 
 const DEMO = [
@@ -320,22 +379,47 @@ function parseCSV(text){
 
 /* ---------- cargar la hoja ---------- */
 async function loadSheet(showStatus){
-  if(!S.fetchUrl){ useDemo(); return; }
+  if(!hasSource()){ useDemo(); return; }
   try{
-    const res=await fetch(S.fetchUrl,{cache:"no-store"});
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    const text=await res.text();
-    const all=parseCSV(text);
-    if(all.length<2) throw new Error("La hoja no tiene respuestas todavía.");
-    S.headers=all[0]; S.rows=all.slice(1); S.demo=false;
+    let table;
+    if(S.appUrl){
+      // puente Apps Script: lectura en vivo sin caché
+      const resp=await jsonpRequest(cb=>
+        S.appUrl+(S.appUrl.includes("?")?"&":"?")+"callback="+cb+"&t="+Date.now());
+      const v=(resp && resp.values) || [];
+      table={headers: v[0]||[], rows: v.slice(1)};
+    }else if(S.csvUrl){
+      const res=await fetch(S.csvUrl,{cache:"no-store"});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      const all=parseCSV(await res.text());
+      table={headers: all[0]||[], rows: all.slice(1)};
+    }else{
+      table=parseGviz(await jsonpRequest(cb=>
+        "https://docs.google.com/spreadsheets/d/"+S.sheetId+
+        "/gviz/tq?tqx=out:json;responseHandler:"+cb+"&headers=1&gid="+S.gid+"&t="+Date.now()));
+    }
+    if(!table.headers.length) throw new Error("No se encontraron columnas.");
+    S.headers=table.headers; S.rows=table.rows; S.demo=false;
+    // columnas que son preguntas (se salta la de fecha/hora)
+    const esFecha=/marca temporal|timestamp|fecha|hora/i;
+    S.qCols=S.headers.map((h,i)=>({h,i})).filter(o=>o.h && !esFecha.test(o.h)).map(o=>o.i);
+    if(!S.qCols.length) S.qCols=S.headers.map((_,i)=>i);
+    if(!S.colChosen){ S.qPtr=0; S.colIndex=S.qCols[0]; }
     if(S.colIndex>=S.headers.length) S.colIndex=S.headers.length-1;
     buildColSelect();
+    updateQbar();
     rebuildResponses();
-    if(showStatus) setStatus("En vivo · "+S.responses.length+" respuestas cargadas.","ok");
+    if(showStatus){
+      if(S.responses.length)
+        setStatus("En vivo · "+S.responses.length+" respuestas en esta pregunta.","ok");
+      else
+        setStatus("Conectado en vivo, pero esta pregunta aún no tiene respuestas. "+
+          "Avanza con las flechas o espera a que lleguen.","ok");
+    }
     note.textContent="en vivo";
   }catch(err){
     if(showStatus) setStatus("No se pudo leer la hoja: "+err.message+
-      " Revisa que la hoja esté compartida como 'Cualquier persona con el enlace · Lector'.","err");
+      " Revisa que esté compartida como 'Cualquier persona con el enlace · Lector' y que el enlace sea correcto.","err");
     if(S.demo) useDemo();
   }
 }
@@ -347,10 +431,14 @@ function useDemo(){
 }
 
 function rebuildResponses(){
-  let list=S.rows.map(r=>(r[S.colIndex]||"").trim()).filter(v=>v!=="");
+  let list=S.rows.map(r=>{
+    const v=r[S.colIndex];
+    return (v==null?"":String(v)).trim();
+  }).filter(v=>v!=="");
   // las filas vienen de la más antigua a la más nueva; nos quedamos con las últimas
   if(S.limit>0 && list.length>S.limit) list=list.slice(-S.limit);
-  S.responses=list.length?list:DEMO.slice();
+  // en modo demo mostramos ejemplos; conectados en vivo mostramos lo real (aunque esté vacío)
+  S.responses = S.demo ? DEMO.slice() : list;
   totalEl.textContent=pad(S.responses.length);
   buildQueue();
   if(S.qpos>=S.responses.length) S.qpos=0;
@@ -364,6 +452,38 @@ function buildColSelect(){
     if(i===S.colIndex) o.selected=true;
     sel.appendChild(o);
   });
+}
+
+/* ---------- conmutador de preguntas ---------- */
+function updateQbar(){
+  const bar=el("qbar");
+  if(S.demo || !S.qCols.length){ bar.classList.add("hidden"); return; }
+  bar.classList.remove("hidden");
+  el("qlabel").textContent=S.headers[S.colIndex]||"";
+  const multi=S.qCols.length>1;
+  el("qPrev").style.display=multi?"":"none";
+  el("qNext").style.display=multi?"":"none";
+  el("qmeta").textContent=multi?("Pregunta "+(S.qPtr+1)+" de "+S.qCols.length):"";
+}
+
+function goToQuestion(ptr){
+  if(!S.qCols.length) return;
+  S.qPtr=(ptr+S.qCols.length)%S.qCols.length;
+  S.colIndex=S.qCols[S.qPtr];
+  S.colChosen=true;
+  S.qpos=0;
+  buildColSelect();
+  updateQbar();
+  rebuildResponses();
+  render();
+  S.segStart=performance.now(); fill.style.width="0%";
+}
+function switchQuestion(d){ goToQuestion(S.qPtr+d); }
+
+/* mantener el conmutador en sintonía si eligen columna desde el desplegable */
+function syncPtrFromCol(){
+  const p=S.qCols.indexOf(S.colIndex);
+  if(p>=0) S.qPtr=p;
 }
 
 /* ---------- cola de reproducción ---------- */
@@ -396,7 +516,17 @@ function fitQuote(txt){
 }
 
 function render(){
-  if(!S.responses.length) return;
+  if(!S.responses.length){
+    quote.classList.remove("show");
+    const msg="A la espera de respuestas…";
+    setTimeout(()=>{
+      quote.innerHTML='<span style="opacity:.5">'+msg+'</span>';
+      fitQuote(msg);
+      quote.classList.add("show");
+    },180);
+    curEl.textContent="00"; fill.style.width="0%";
+    return;
+  }
   const idx=S.queue[S.qpos % S.queue.length];
   const txt=S.responses[idx];
   quote.classList.remove("show");
@@ -448,7 +578,9 @@ function togglePause(){
 function openPanel(o){ panel.classList.toggle("open",o); scrim.classList.toggle("open",o); }
 el("gear").onclick=()=>openPanel(!panel.classList.contains("open"));
 scrim.onclick=()=>openPanel(false);
-el("col").onchange=e=>{ S.colIndex=+e.target.value; rebuildResponses(); };
+el("col").onchange=e=>{ S.colIndex=+e.target.value; S.colChosen=true; syncPtrFromCol(); updateQbar(); rebuildResponses(); render(); S.segStart=performance.now(); fill.style.width="0%"; };
+el("qPrev").onclick=()=>switchQuestion(-1);
+el("qNext").onclick=()=>switchQuestion(1);
 document.querySelectorAll("#order button").forEach(b=>{
   b.onclick=()=>{
     document.querySelectorAll("#order button").forEach(x=>x.classList.remove("active"));
@@ -458,7 +590,7 @@ document.querySelectorAll("#order button").forEach(b=>{
 
 el("apply").onclick=async()=>{
   S.url=el("url").value.trim();
-  S.fetchUrl=toLiveUrl(S.url);
+  configureSource(S.url);
   S.durMs=Math.max(3,+el("dur").value||9)*1000;
   S.refreshMs=Math.max(5,+el("ref").value||12)*1000;
   S.limit=Math.max(0,+el("lim").value||0);
@@ -472,7 +604,7 @@ el("apply").onclick=async()=>{
 
 function scheduleRefresh(){
   clearInterval(S.refreshTimer);
-  if(S.fetchUrl){
+  if(hasSource()){
     S.refreshTimer=setInterval(()=>loadSheet(false), S.refreshMs);
   }
 }
@@ -488,14 +620,16 @@ document.addEventListener("keydown",e=>{
   if(e.code==="Space"){ e.preventDefault(); togglePause(); }
   else if(e.code==="ArrowRight") next(1);
   else if(e.code==="ArrowLeft") next(-1);
+  else if(e.code==="ArrowDown"){ e.preventDefault(); switchQuestion(1); }
+  else if(e.code==="ArrowUp"){ e.preventDefault(); switchQuestion(-1); }
   else if(e.key.toLowerCase()==="s") openPanel(!panel.classList.contains("open"));
 });
 
 /* ---------- arranque ---------- */
 (async function init(){
   el("url").value=S.url;
-  S.fetchUrl=toLiveUrl(S.url);
-  if(S.fetchUrl){ await loadSheet(true); scheduleRefresh(); }
+  configureSource(S.url);
+  if(hasSource()){ await loadSheet(true); scheduleRefresh(); }
   else useDemo();
   start();
 })();
